@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- Refactored build and setup process using a `Makefile`, simplifying development and build workflows.
 - Streamlined build scripts (`build_app.sh`, `setup_env.sh`) by removing redundant commands and commented-out legacy code.
 - Refined `.gitignore` to include additional standard ignores (`.DS_Store`, `__pycache__/`, `app_output.log`).
 - Cleaned up `dictate_app.py` by removing extensive commented-out code, unused variables, and obsolete comments/placeholders.
@@ -16,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Further standardized versioning to ensure `version.py` is the single source of truth.
 ### Fixed
 ### Removed
+- Removed `setup_env.sh`, `build_app.sh`, and `run_dictate_app.sh` scripts, as their functionality is now handled by the `Makefile`.
 - Legacy/redundant files from the repository:
   - `.DS_Store` (now gitignored)
   - `get-pip.py`

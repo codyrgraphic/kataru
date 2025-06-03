@@ -17,9 +17,10 @@ This file tracks key information for the Kataru dictation project.
 
 ## Build Configuration
 
-*   **Build System:** CMake (Makefile is deprecated for compilation)
-*   **Metal Support:** Enabled via CMake flag `-DGGML_METAL=ON` (Note: `-DWHISPER_METAL=ON` also worked but is deprecated).
-*   **Main Executable Path:** `/Users/codyroberts/software-design/speech-to-text/whisper.cpp/build/bin/whisper-cli`
+*   **Build System for whisper.cpp:** CMake. The `whisper.cpp` submodule is compiled using CMake.
+*   **Project Build Orchestration:** The top-level `Makefile` in the project root orchestrates the entire build process, including `whisper.cpp` compilation and application bundling.
+*   **Metal Support:** Enabled via CMake flag `-DGGML_METAL=ON` within the `Makefile` for `whisper.cpp` compilation.
+*   **Main Executable Path (whisper-cli):** `/Users/codyroberts/software-design/speech-to-text/whisper.cpp/build/bin/whisper-cli` (This is created by the `Makefile`'s `build_whisper_cpp` or `all` targets).
 *   **Stream Executable:** Not built by default (requires SDL2 library and `-DWHISPER_SDL2=ON` CMake flag).
 
 ## Script Configuration
@@ -43,26 +44,21 @@ The project supports two execution modes:
 To properly set up the development environment:
 
 ```bash
-# If you have environment variables from previous py2app builds:
-unset PYTHONPATH
-unset PYTHONHOME
-unset PYTHONUNBUFFERED
-unset PYTHONDONTWRITEBYTECODE
+# The Makefile handles environment setup. For a full build including venv creation and dependencies:
+make all
 
-# Create virtual environment (prefer Python 3.11+)
-python3 -m venv .venv
-
-# Activate
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+# To just setup the environment (create .venv and install requirements):
+make setup
 ```
 
-Helper scripts:
-* `run_dictate_app.sh` - Runs the app in development mode
-* `setup_env.sh` - Sets up the virtual environment with dependencies
-* `build_app.sh` - Builds the bundled app with py2app
+Key Makefile Targets:
+* `make all`: Cleans previous app bundle, sets up the environment, builds `whisper.cpp`, downloads the model, and builds the `Kataru.app` bundle.
+* `make setup`: Ensures the Python virtual environment (`.venv/`) is created and dependencies from `requirements.txt` are installed.
+* `make build_whisper_cpp`: Compiles the `whisper.cpp` submodule and downloads the model.
+* `make build_app`: Builds the `Kataru.app` bundle using PyInstaller (assumes environment and `whisper.cpp` are ready).
+* `make run`: Runs the bundled `dist/Kataru.app`.
+* `make run_dev`: Runs the application directly from `dictate_app.py` for development.
+* `make clean`: Removes all build artifacts, including `.venv/`, `dist/`, `build/` (PyInstaller's), and `whisper.cpp/build/`.
 
 ## Key Architectural Improvements
 
@@ -238,13 +234,13 @@ After significant issues with `py2app`, the project was successfully bundled usi
 
 **Key Configuration Points:**
 
-1.  **Build Script:** The `build_app.sh` script orchestrates the build.
-    *   Activates the `.venv` virtual environment.
+1.  **Build Process:** The `Makefile` orchestrates the build (e.g., `make all` or `make build_app`).
+    *   Activates/creates the `.venv` virtual environment.
     *   Installs dependencies from `requirements.txt`.
-    *   Cleans previous `build/` and `dist/` directories.
-    *   Builds the `whisper.cpp` libraries.
+    *   Cleans previous PyInstaller `build/` and `dist/` directories before bundling.
+    *   Builds the `whisper.cpp` libraries (via `make build_whisper_cpp` dependency).
     *   Runs `pyinstaller "Kataru.spec"` to build the app.
-    *   Performs final code signing using a specific Developer ID (if configured in the script) **WITHOUT** the Hardened Runtime (`--options=runtime` is omitted from the `codesign` command).
+    *   The `build_app.sh` script (now removed) previously handled final code signing. This manual signing step might need to be re-integrated into the `Makefile` or post-build process if ad-hoc signing by PyInstaller is insufficient for distribution or causes issues.
 2.  **Spec File (`Kataru.spec`):**
     *   Configures the `Analysis` step to include the main script (`dictate_app.py`) and necessary data files (`datas` list):
         *   `config.ini`
@@ -256,22 +252,22 @@ After significant issues with `py2app`, the project was successfully bundled usi
         *   Sets the application icon (`.icns`, auto-generated from `.png` if needed).
         *   Sets the `bundle_identifier`.
         *   Includes necessary `Info.plist` settings (permissions descriptions, `LSUIElement`).
-        *   **Does NOT** specify `codesign_identity` or `entitlements_file`, leaving final signing to the build script.
+        *   **Does NOT** specify `codesign_identity` or `entitlements_file` in the `.spec` itself, leaving final signing to be handled externally if needed.
 3.  **Hardened Runtime:**
-    *   The critical factor for allowing the F5 hotkey (via `pynput`) to work when the app is launched normally (`open ...`) was **disabling the Hardened Runtime** during the final code signing step in `build_app.sh`.
+    *   The critical factor for allowing the F5 hotkey (via `pynput`) to work when the app is launched normally (`open ...`) was **disabling the Hardened Runtime** during the final code signing step (previously in `build_app.sh`).
     *   It appears the Hardened Runtime's restrictions interfere with the global event listener used by `pynput`.
-    *   **Caution:** Re-enabling Hardened Runtime (e.g., by adding `--options=runtime` back to `codesign` or using entitlements) may break hotkey functionality unless the exact required entitlements are identified and added.
+    *   **Caution:** If distributing, investigate if a more targeted set of entitlements can be used with Hardened Runtime. For now, building without it is prioritized for functionality.
 4.  **Dependencies:** `pyinstaller` is included in `requirements.txt`. `py2app` and `setup.py` have been removed.
 
-**Outcome:** This configuration produces a working `.app` bundle in the `dist/` directory that launches correctly via `open` and successfully handles hotkey listening, recording, transcription, and pasting.
+**Outcome:** This configuration produces a working `.app` bundle in the `dist/` directory that launches correctly via `open` (or `make run`) and successfully handles hotkey listening, recording, transcription, and pasting.
 
 ### Maintaining Bundled App Compatibility
 
 To prevent breaking the bundled `.app` version when updating the script or adding features, adhere to the following practices:
 
 1.  **Understand Dual Execution Modes:** The application operates in two distinct modes:
-    *   **Script Mode (Development):** Run via `./run_dictate_app.sh` or `python3 dictate_app.py`. Paths are typically relative to the script file or project root, often guided by `config.ini`.
-    *   **Bundled Mode (Distribution):** Run via `open dist/Kataru.app`. Resources (executables, models, assets, dylibs) are located within the `.app/Contents/Resources/` directory. Path handling in `dictate_app.py` for this mode *must* reflect the structure defined by `Kataru.spec`.
+    *   **Script Mode (Development):** Run via `make run_dev`. Paths are typically relative to the script file or project root, often guided by `config.ini`.
+    *   **Bundled Mode (Distribution):** Run via `make run` or `open dist/Kataru.app`. Resources (executables, models, assets, dylibs) are located within the `.app/Contents/Resources/` directory. Path handling in `dictate_app.py` for this mode *must* reflect the structure defined by `Kataru.spec`.
 
 2.  **`Kataru.spec` is the Authority for Bundle Structure:**
     *   The `datas` list in `Kataru.spec` dictates exactly where files are copied into `Contents/Resources/`.
@@ -290,9 +286,9 @@ To prevent breaking the bundled `.app` version when updating the script or addin
 
 5.  **Mandatory Dual Testing Protocol:**
     *   **After ANY code change potentially affecting paths, dependencies, or resource loading, BOTH modes MUST be tested:**
-        1.  Test script mode: `./run_dictate_app.sh`
-        2.  Rebuild the app: `./build_app.sh` (which should perform a clean build)
-        3.  Test bundled mode: `open dist/Kataru.app`
+        1.  Test script mode: `make run_dev`
+        2.  Rebuild the app: `make build_app` (or `make all` for a full rebuild from scratch after `make clean`)
+        3.  Test bundled mode: `make run` or `open dist/Kataru.app`
     *   This is the single most important step to catch bundle-specific issues early.
 
 6.  **Path Validation in `dictate_app.py`:**
@@ -300,9 +296,10 @@ To prevent breaking the bundled `.app` version when updating the script or addin
     *   If a critical file is not found, print a clear error message stating the execution mode (script/bundle), the full path that failed, and a troubleshooting hint (e.g., "Check .spec file or config.ini paths.").
     *   For bundled mode, consider using `rumps.alert` and `sys.exit()` if essential files like the model or executable are missing, to provide immediate user feedback.
 
-7.  **Build Script (`build_app.sh`) Enhancements:**
-    *   Ensure the script always performs a clean build (deletes `build/` and `dist/` first).
-    *   **Consider adding a post-build verification step:** The script could check for the existence of key files (e.g., `dist/Kataru.app/Contents/Resources/bin/whisper-cli`, `Resources/models/ggml-small.en.bin`) and fail the build if they are not found.
+7.  **Makefile Enhancements/Build Process:**
+    *   The `make clean` target can be used for a full cleanup. `make all` effectively does a clean build of the app bundle by removing old `dist/` and PyInstaller's `build/` directories before bundling.
+    *   The `Makefile`'s `build_whisper_cpp` target ensures `whisper.cpp` is compiled before the app bundle.
+    *   **Consider adding a post-build verification step (to Makefile or script):** Could check for the existence of key files (e.g., `dist/Kataru.app/Contents/Resources/bin/whisper-cli`, `Resources/models/ggml-small.en.bin`) and fail the build if they are not found.
 
 8.  **Dynamic Libraries (`.dylib`):**
     *   The `.spec` file correctly copies necessary `.dylib` files into `Contents/Resources/`.

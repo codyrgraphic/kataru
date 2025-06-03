@@ -12,94 +12,75 @@ A macOS menu bar app for dictation using Whisper.cpp. Press and hold a hotkey (d
 - Works with minimal latency using local Whisper models
 - Supports both direct execution (development) and bundled app (distribution) modes
 
-## Installation
+## Prerequisites
 
-### Prerequisites
+- **macOS**
+- **Git:** For cloning the repository.
+- **Homebrew (Recommended):** For easily installing `git-lfs` and other tools.
+  - Install Homebrew if not present: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+- **Xcode Command Line Tools:** Needed for compiling `whisper.cpp` (a C++ project). Install with `xcode-select --install` if you haven't already.
+- **Python 3.11+:** Ensure Python 3.11 or a newer version is installed and accessible as `python3`.
 
-- macOS
-- Python 3.11+ (recommended)
-- Compiled Whisper.cpp repository (see below)
-- Whisper model file (e.g., ggml-small.en.bin)
+## Setup, Build, and Run using Makefile
 
-### Setup from Source
+This project uses a `Makefile` to simplify the setup, build, and execution process.
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/yourusername/speech-to-text.git
-   cd speech-to-text
-   ```
+1.  **Clone the Repository:**
+    Open your terminal and run the following commands. The `--recurse-submodules` flag is important as it will also clone the `whisper.cpp` submodule.
+    ```bash
+    git clone --recurse-submodules git@github.com:codyrgraphic/kataru.git
+    cd kataru
+    ```
+    *(If you prefer HTTPS: `git clone --recurse-submodules https://github.com/codyrgraphic/kataru.git`)*
 
-2. Clone and build Whisper.cpp with Metal support:
-   ```bash
-   git clone https://github.com/ggerganov/whisper.cpp.git
-   cd whisper.cpp
-   cmake -B build -DGGML_METAL=ON
-   cmake --build build --config Release -j
-   cd ..
-   ```
+2.  **Install Git LFS (First-time setup per user):**
+    Git LFS helps manage large files. While the main model is in the submodule, LFS is good practice for the project.
+    ```bash
+    brew install git-lfs
+    git lfs install # Initializes Git LFS for your user account (run once)
+    ```
 
-3. Download a Whisper model:
-   ```bash
-   cd whisper.cpp/models
-   bash download-ggml-model.sh small.en
-   cd ../..
-   ```
+3.  **Build Everything (Initial Setup & App Bundling):**
+    This single command will:
+    - Set up the Python virtual environment (`.venv/`).
+    - Install all required Python dependencies.
+    - Compile the `whisper.cpp` submodule with Metal support (for M1/M2/M3 Macs).
+    - Download the `ggml-small.en.bin` speech recognition model.
+    - Build the `Kataru.app` application bundle in the `dist/` directory.
+    ```bash
+    make all
+    ```
+    This command may take a few minutes the first time, especially during the `whisper.cpp` compilation.
 
-4. Run the setup script to create a virtual environment and install dependencies:
-   ```bash
-   ./setup_env.sh
-   ```
-   
-   Or manually set up the environment:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
+4.  **Run the Application:**
 
-5. Edit `config.ini` if needed (path configuration is usually automatic)
+    *   **Run the Bundled App (Recommended for General Use):**
+        ```bash
+        make run
+        ```
+        Alternatively, you can directly open the app:
+        ```bash
+        open dist/Kataru.app
+        ```
+        On the first launch, macOS will likely prompt you to grant necessary permissions for:
+        - **Microphone Access:** For recording audio.
+        - **Accessibility Permissions:** For global hotkey detection.
+        - **Automation (System Events):** For pasting transcribed text.
+        Please grant these permissions when asked. You can manage them later in **System Settings > Privacy & Security**. If the hotkey doesn't work immediately, try toggling the Accessibility permission for Kataru off and on, or even removing and re-adding Kataru to the Accessibility list.
 
-## Running the Application
+    *   **Run in Development Mode (Directly from scripts):**
+        This is useful for debugging or making live code changes without rebuilding the entire bundle.
+        ```bash
+        make run_dev
+        ```
+        This command runs `python3 dictate_app.py` using the project's virtual environment and also unsets `PYTHONPATH` for the run to avoid potential conflicts.
 
-### Development Mode
+## Other Useful Makefile Commands
 
-Before running in development mode, ensure no conflicting Python environment variables are set:
-
-```bash
-# Check for environment variables that may cause conflicts
-env | grep PYTHON
-
-# If present, unset these variables
-unset PYTHONPATH
-unset PYTHONHOME
-unset PYTHONUNBUFFERED
-unset PYTHONDONTWRITEBYTECODE
-```
-
-Then run the application using the provided script:
-
-```bash
-./run_dictate_app.sh
-```
-
-Or manually activate the virtual environment and run:
-
-```bash
-source .venv/bin/activate
-python3 dictate_app.py
-```
-
-### Build and Run as a Standalone App
-
-1. Use the build script to create the application bundle:
-   ```bash
-   ./build_app.sh
-   ```
-
-2. Run the bundled application:
-   ```bash
-   open dist/Kataru.app
-   ```
+-   **`make setup`**: Sets up the Python virtual environment and installs dependencies (part of `make all`).
+-   **`make build_whisper_cpp`**: Compiles `whisper.cpp` and downloads the model (part of `make all`).
+-   **`make build_app`**: Builds only the `Kataru.app` bundle, assuming dependencies and `whisper.cpp` are already built (part of `make all`).
+-   **`make clean`**: Removes all build artifacts, including the Python virtual environment (`.venv/`), `dist/` directory, PyInstaller's `build/` directory, and `whisper.cpp` build files. This is useful for a fresh start.
 
 ## Configuration
 
@@ -163,22 +144,21 @@ The application uses a clean architecture that supports both direct execution (f
 
 ## Troubleshooting
 
-### Python Environment Variable Conflicts
+### Python Environment Variable Conflicts when Running Manually
+If you are trying to run `python3 dictate_app.py` manually (i.e., not using `make run_dev` or `make run`), and encounter issues like `ModuleNotFoundError: No module named 'encodings'`, it might be due to `PYTHONPATH` or `PYTHONHOME` environment variables pointing to incompatible Python environments.
 
-If you've previously used other Python bundling tools with this project directory, or if you suspect conflicting Python environment variables set by other processes, you may encounter errors when trying to run the script directly (e.g., `ModuleNotFoundError: No module named 'encodings'`).
+The `make run_dev` command attempts to mitigate this by unsetting `PYTHONPATH` for its execution.
 
-Check if these variables are set:
-```bash
-env | grep PYTHON
-```
-
-If you see variables like `PYTHONHOME` or `PYTHONPATH` pointing to your app bundle, unset them:
-```bash
-unset PYTHONPATH
-unset PYTHONHOME
-unset PYTHONUNBUFFERED
-unset PYTHONDONTWRITEBYTECODE
-```
+If running manually:
+1.  Check for problematic variables:
+    ```bash
+    env | grep PYTHON
+    ```
+2.  If `PYTHONPATH` is set and causing issues, unset it for your current session:
+    ```bash
+    unset PYTHONPATH
+    ```
+    It's generally advisable to avoid having `PYTHONPATH` or `PYTHONHOME` set globally if you frequently work with different Python projects, as they can lead to unexpected behavior. Relying on virtual environments (which `make setup` and `make all` create) is usually a safer approach.
 
 ### Permissions
 
