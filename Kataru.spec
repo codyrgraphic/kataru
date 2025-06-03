@@ -3,6 +3,11 @@ import os
 import sys
 import platform
 from PyInstaller.utils.hooks import collect_data_files
+
+# Ensure the project root is in sys.path for the spec file itself to find local modules
+project_root_for_spec = os.path.abspath(".") # Use current working directory, which PyInstaller should set to project root
+sys.path.insert(0, project_root_for_spec)
+
 from version import __version__ # <-- Import the version
 
 # --- Helper function to get relative path ---
