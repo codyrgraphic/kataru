@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Allow capturing keyboard input events -->
+    <key>com.apple.security.device.inputmonitoring</key>
+    <true/>
+
+    <!-- Allow legacy keyboard event APIs (might help pynput) -->
+    <key>com.apple.security.device.keyboard</key>
+    <true/>
+
+    <!-- Basic entitlement needed for hardened runtime -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+
+    <!-- Allow sending Apple Events (for pasting) -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+</dict>
+</plist> 
