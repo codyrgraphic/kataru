@@ -12,7 +12,7 @@ import sys
 import platform
 import ctypes.util
 from pathlib import Path
-import re # Added import
+import re
 
 # Import the conversion list
 from australian_english_conversions import AUS_ENG_CONVERSIONS
@@ -79,10 +79,14 @@ import rumps
 import sounddevice as sd
 from pynput import keyboard
 from scipy.io.wavfile import write as write_wav
-import objc # Crucial for pyobjc an dAppHelper
-from PyObjCTools import AppHelper # For thread-safe UI updates
+import objc
+from PyObjCTools import AppHelper
 
-from version import __version__ # <-- Import the version
+# Import for sleep/wake notifications
+import Cocoa
+from Foundation import NSNotificationCenter, NSWorkspace
+
+from version import __version__
 
 # --- Constants from Config (Defaults) ---
 # These will be overwritten by config file values
@@ -95,33 +99,25 @@ DEFAULT_MODEL_NAME = "ggml-small.en.bin"
 DEFAULT_ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_CHANNELS = 1
-DEFAULT_DEVICE_INDEX = -1 # Use -1 for default input device
+DEFAULT_DEVICE_INDEX = -1  # Use -1 for default input device
 DEFAULT_HOTKEY_STR = "f6"
 DEFAULT_ICON_DEFAULT = "icon_default.png"
 DEFAULT_ICON_ACTIVE = "icon_active.png"
-DEFAULT_TIMEOUT_SECONDS = 60 # Default transcription timeout
-DEFAULT_NUM_THREADS = 4 # Default whisper threads
+DEFAULT_TIMEOUT_SECONDS = 60  # Default transcription timeout
+DEFAULT_NUM_THREADS = 4  # Default whisper threads
 
 def parse_hotkey(key_str):
     """Parses a string from config into a pynput key object or combination."""
-    print(f"[HotkeyDebug] Parsing hotkey string: '{key_str}'")
     # Simple key names (like 'f6', 'cmd_r', 'shift')
     if hasattr(keyboard.Key, key_str):
-        key_obj = getattr(keyboard.Key, key_str)
-        print(f"[HotkeyDebug] Parsed as pynput.keyboard.Key.{key_str}: {key_obj}")
-        return key_obj
+        return getattr(keyboard.Key, key_str)
     # Single characters
     elif len(key_str) == 1:
-        key_obj = keyboard.KeyCode.from_char(key_str)
-        print(f"[HotkeyDebug] Parsed as keyboard.KeyCode.from_char: {key_obj}")
-        return key_obj
+        return keyboard.KeyCode.from_char(key_str)
     # Combinations (like <ctrl>+<alt>+l) - Requires GlobalHotKeys (more complex)
     elif '+' in key_str and key_str.startswith('<') and key_str.endswith('>'):
-        # For now, we only support single keys with the standard listener.
-        # Raise an error or return None if a combination is specified but not supported by current logic.
-        print(f"Warning: Hotkey combinations ({key_str}) are not fully supported by the current listener logic. Using F6 as default.")
-        # TODO: Implement GlobalHotKeys if combination support is desired.
-        return keyboard.Key.f6 # Fallback
+        print(f"Warning: Hotkey combinations ({key_str}) are not fully supported. Using F6 as default.")
+        return keyboard.Key.f6
     else:
         print(f"Warning: Unknown hotkey format: '{key_str}'. Using F6 as default.")
         return keyboard.Key.f6
@@ -138,7 +134,7 @@ class MicrophoneManager:
         """
         self.preferences = self._load_preferences(config)
         self.available_mics = []
-        self.current_mic_index = None # This will be an integer index
+        self.current_mic_index = None
         self.change_callback = change_callback
         self.scan_timer = None
         self.scanning_interval = 5  # Seconds between device scans
@@ -149,8 +145,7 @@ class MicrophoneManager:
         if config.has_section('microphones'):
             for key, value in config.items('microphones'):
                 try:
-                    # Strip quotes if present in the key
-                    name = key.strip('"\\\'') # Handle both single and double quotes
+                    name = key.strip('"\\\'')  # Strip quotes if present
                     priority = int(value)
                     preferences[name.lower()] = priority
                 except ValueError:
@@ -159,11 +154,7 @@ class MicrophoneManager:
     
     def start_monitoring(self):
         """Start periodic scanning for device changes."""
-        self.scan_devices()  # Initial scan
-        if self.scan_timer is None:
-            # Ensure rumps is available if MicrophoneManager is used independently
-            # However, in this integrated approach, DictationApp handles rumps.Timer
-            pass 
+        self.scan_devices()  # Initial scan 
             
     def stop_monitoring(self):
         """Stop monitoring for device changes."""
@@ -171,14 +162,13 @@ class MicrophoneManager:
             self.scan_timer.stop()
             self.scan_timer = None
     
-    def scan_devices(self, _=None): # Add _ for rumps.Timer compatibility
+    def scan_devices(self, _=None):  # Add _ for rumps.Timer compatibility
         """Scan for available microphones and update the available list."""
         try:
             devices = sd.query_devices()
-            # Make a copy for comparison if needed, careful with tuple vs list structure
             old_available_mic_indices_names = set((idx, name) for idx, name in self.available_mics)
             
-            self.available_mics = [] # List of tuples: (index, name)
+            self.available_mics = []  # List of tuples: (index, name)
             
             for i, dev in enumerate(devices):
                 if dev['max_input_channels'] > 0:
@@ -203,6 +193,9 @@ class MicrophoneManager:
             elif self.current_mic_index is None: # If no mic was selected, or if it became unavailable
                 self.current_mic_index = self.get_best_microphone_index()
                 print(f"No microphone was selected or previous became unavailable. Selected best: (Index: {self.current_mic_index}, Name: {self.get_microphone_name(self.current_mic_index) if self.current_mic_index is not None else 'N/A'})")
+                # Trigger callback to notify the app of the new selection
+                if self.change_callback and self.current_mic_index is not None:
+                    AppHelper.callAfter(self.change_callback, None, self.current_mic_index)
 
             new_available_mic_indices_names = set((idx, name) for idx, name in self.available_mics)
             if old_available_mic_indices_names != new_available_mic_indices_names:
@@ -219,14 +212,28 @@ class MicrophoneManager:
             print(f"Error scanning audio devices: {e}")
             # AppHelper.callAfter(rumps.alert, title="Audio Device Error", message=f"Error scanning audio devices: {e}")
     
-    def get_best_microphone_index(self):
-        """Get the index of the best available microphone based on preferences."""
+    def get_best_microphone_index(self, exclude_indices=None):
+        """Get the index of the best available microphone based on preferences.
+        
+        Args:
+            exclude_indices: List of device indices to exclude from selection
+        """
+        if exclude_indices is None:
+            exclude_indices = []
+            
         if not self.available_mics:
             print("Warning: No microphones available during best microphone selection.")
             return -1 # PortAudio default device index
             
+        # Filter out excluded devices
+        available_filtered = [(idx, name) for idx, name in self.available_mics if idx not in exclude_indices]
+        
+        if not available_filtered:
+            print(f"Warning: No microphones available after excluding {exclude_indices}")
+            return -1
+            
         scored_mics = [] # List of (index, name, score)
-        for idx, name in self.available_mics:
+        for idx, name in available_filtered:
             score = 0
             name_lower = name.lower()
             for pattern, priority in self.preferences.items():
@@ -237,11 +244,13 @@ class MicrophoneManager:
         scored_mics.sort(key=lambda x: x[2], reverse=True) # Sort by score descending
         
         if scored_mics and scored_mics[0][2] > 0: # If there's at least one match with preference
-            print(f"Best microphone selected based on preferences: {scored_mics[0][1]} (Index: {scored_mics[0][0]}, Score: {scored_mics[0][2]})")
+            excluded_note = f" (excluding {exclude_indices})" if exclude_indices else ""
+            print(f"Best microphone selected based on preferences{excluded_note}: {scored_mics[0][1]} (Index: {scored_mics[0][0]}, Score: {scored_mics[0][2]})")
             return scored_mics[0][0]
-        elif self.available_mics: # No preference match, fallback to first available
-            print(f"No preference match. Falling back to first available microphone: {self.available_mics[0][1]} (Index: {self.available_mics[0][0]})")
-            return self.available_mics[0][0]
+        elif available_filtered: # No preference match, fallback to first available
+            excluded_note = f" (excluding {exclude_indices})" if exclude_indices else ""
+            print(f"No preference match{excluded_note}. Falling back to first available microphone: {available_filtered[0][1]} (Index: {available_filtered[0][0]})")
+            return available_filtered[0][0]
         
         print("Warning: No microphones available and no preference match. Returning default device index.")
         return -1 # Default device as a last resort
@@ -271,8 +280,24 @@ class MicrophoneManager:
     
     def verify_microphone(self, index):
         """Verify if a microphone index is valid and available."""
-        if index is None: return False
-        return any(idx == index for idx, _ in self.available_mics)
+        if index is None: 
+            return False
+        
+        # Check if index is in our cached available list
+        for idx, name in self.available_mics:
+            if idx == index:
+                # Additionally verify with sounddevice that the device still exists
+                try:
+                    devices = sd.query_devices()
+                    if index < len(devices) and devices[index]['max_input_channels'] > 0:
+                        return True
+                    else:
+                        return False
+                except Exception as e:
+                    print(f"Error checking device {index}: {e}")
+                    return False
+        
+        return False
 
 class DictationApp(rumps.App):
     # --- Class Level Info for macOS --- #
@@ -342,8 +367,8 @@ class DictationApp(rumps.App):
                 replacer = self._repl_func_factory(aus_replacement_singular)
                 converted_text = re.sub(pattern, replacer, converted_text, flags=re.IGNORECASE)
             except re.error as e:
-                print(f"[AusE Debug] Regex error for pattern '{pattern}': {e}")
-                continue # Skip faulty patterns
+                print(f"Regex error for pattern '{pattern}': {e}")
+                continue  # Skip faulty patterns
 
         end_time = time.perf_counter()
         conversion_time_ms = (end_time - start_time) * 1000
@@ -355,36 +380,39 @@ class DictationApp(rumps.App):
             print("Microphone menu attributes not initialized yet. Skipping update.")
             return
 
-        # Clear existing microphone menu items (except the current indicator and separator)
-        items_to_remove = []
-        if hasattr(self.mic_menu, 'keys'): # Check if it behaves like a dict (rumps menu items)
-            for key in list(self.mic_menu.keys()): # Iterate over a copy of keys
-                item = self.mic_menu[key]
-                if item != self.current_mic_indicator and not isinstance(item, rumps.separator):
-                    items_to_remove.append(key)
+        # Prevent excessive updates (rate limit to once per second)
+        current_time = time.time()
+        if hasattr(self, 'last_menu_update_time') and current_time - self.last_menu_update_time < 1.0:
+            return
         
-        for key in items_to_remove:
-            del self.mic_menu[key]
+        self.last_menu_update_time = current_time
         
-        # Update current microphone indicator
+        # Clear existing microphone menu items
+        self.mic_menu.clear()
+        
+        # Re-add the current microphone indicator at the top
         current_index = self.mic_manager.current_mic_index
         current_name = self.mic_manager.get_microphone_name(current_index)
         self.current_mic_indicator.title = f"Current: {current_name if current_name else 'None'}"
+        self.mic_menu.add(self.current_mic_indicator)
+        
+        # Add a separator
+        self.mic_menu.add(None)
         
         # Add available microphones to the menu
         available_mics = self.mic_manager.get_available_microphones()
         if not available_mics:
             no_mics_item = rumps.MenuItem("No microphones found")
-            no_mics_item.set_callback(None) # Disable callback
+            no_mics_item.set_callback(None)
             self.mic_menu.add(no_mics_item)
         else:
             for idx, name, score in available_mics:
                 menu_title = f"{name} (Prio: {score})"
                 if idx == current_index:
-                    menu_title = f"▶ {menu_title}" # Indicate current selection
+                    menu_title = f"▶ {menu_title}"  # Indicate current selection
                  
                 menu_item = rumps.MenuItem(menu_title)
-                menu_item.index = idx # Store index for callback
+                menu_item.index = idx  # Store index for callback
                 menu_item.set_callback(self.change_microphone_callback)
                 self.mic_menu.add(menu_item)
 
@@ -511,21 +539,22 @@ class DictationApp(rumps.App):
 
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self.channels = DEFAULT_CHANNELS
-        self.device_index = DEFAULT_DEVICE_INDEX # Initial default before loading config
-        self.audio_input_available = False # Will be set by validation method
+        self.device_index = DEFAULT_DEVICE_INDEX  # Initial default before loading config
+        self.audio_input_available = False  # Will be set by validation method
         self.transcription_timeout_seconds = DEFAULT_TIMEOUT_SECONDS
         self.num_threads = DEFAULT_NUM_THREADS
 
-        self.recording_hotkey = parse_hotkey(DEFAULT_HOTKEY_STR) # Initial default before config load
+        self.recording_hotkey = parse_hotkey(DEFAULT_HOTKEY_STR)  # Initial default before config load
         self.is_recording = False
         self.recorded_data = []
         self.stream = None
-        self.listener_thread = None # For pynput listener
-        self.timer_paused_by_recording = False # Initialize the flag
+        self.listener_thread = None  # For pynput listener
+        self.timer_paused_by_recording = False  # Initialize the flag
 
         # Menu item instance for dynamic updates
         self.current_mic_indicator = rumps.MenuItem("Current: None")
-        self.mic_menu = rumps.MenuItem("Microphones") # Top-level menu item for microphone selection
+        self.mic_menu = rumps.MenuItem("Microphones")  # Top-level menu item for microphone selection
+        self.last_menu_update_time = 0  # Track last update to prevent excessive updates
 
         if self.is_bundled:
             # In bundled mode, resources are in Contents/Resources
@@ -547,17 +576,39 @@ class DictationApp(rumps.App):
             print(f"Script mode: Config path set to {self.config_path}")
 
         # Load configuration from config.ini
-        self.load_config() # This sets self.device_index, self.hotkey_str, etc.
+        self.load_config()  # This sets self.device_index, self.hotkey_str, etc.
 
-        # Crucial: Parse the actual hotkey from config *after* loading config
+        # Parse the actual hotkey from config
         self.recording_hotkey = parse_hotkey(self.hotkey_str)
-        print(f"[HotkeyDebug] Effective recording hotkey after config: {self.recording_hotkey} (from string: '{self.hotkey_str}')")
+        print(f"Recording hotkey: {self.recording_hotkey} (from '{self.hotkey_str}')")
 
-        # Crucial: Validate and set initial audio device *after* config is loaded
+        # Validate and set initial audio device after config is loaded
         self._validate_and_set_initial_audio_device()
 
         # Initialize MicrophoneManager after initial device validation
         self.mic_manager = MicrophoneManager(self.config, change_callback=self.on_microphone_changed)
+        
+        # Sync the mic_manager's current_mic_index with the app's device_index
+        self.mic_manager.scan_devices()  # Initial scan to populate available_mics
+        
+        # Let mic_manager choose the best device based on preferences, then sync app to match
+        best_mic_index = self.mic_manager.get_best_microphone_index()
+        if best_mic_index != -1:
+            # Check if the mic_manager's choice is different from config
+            if best_mic_index != self.device_index:
+                old_name = self.mic_manager.get_microphone_name(self.device_index)
+                self.device_index = best_mic_index
+                new_name = self.mic_manager.get_microphone_name(best_mic_index)
+                print(f"Switching from '{old_name}' to '{new_name}' based on preferences")
+                # Save the new device to config
+                self.update_config_with_new_device()
+            
+            self.mic_manager.current_mic_index = best_mic_index
+            print(f"Microphone synced: {self.mic_manager.get_microphone_name(best_mic_index)}")
+        else:
+            print("No valid microphones found during initialization")
+            self.device_index = -1
+            self.mic_manager.current_mic_index = -1
 
         # Paths that depend on config values (like whisper_cpp_dir) or bundle structure
         if self.is_bundled:
@@ -590,10 +641,15 @@ class DictationApp(rumps.App):
         if not os.path.exists(self.model_path):
              AppHelper.callAfter(rumps.alert, title="Error", message=f"Whisper model not found: {self.model_path}")
 
+        # Initialize the microphone submenu properly
+        self.mic_menu.add(self.current_mic_indicator)
+        self.mic_menu.add(None) # Separator
+        
         # Define the initial structure of the menu. update_microphone_menu will populate self.mic_menu.submenu
         self.menu = [
             rumps.MenuItem("Start Dictation (Hold F5 then release)", callback=None), # Placeholder
             self.mic_menu, # Microphones submenu will be managed by update_microphone_menu
+            rumps.MenuItem("Refresh Audio Devices", callback=self.manual_refresh_devices),
             None, # Separator
             rumps.MenuItem("Edit Config", callback=self.edit_config),
             rumps.MenuItem("Troubleshooting", callback=self.show_troubleshooting),
@@ -603,6 +659,15 @@ class DictationApp(rumps.App):
         # Update microphone menu display initially and start monitoring
         self.update_microphone_menu() # Initial call to populate the menu
         self.mic_manager.start_monitoring() # Start after menu is somewhat set up
+
+        # Create and start periodic device monitoring timer
+        self.device_scan_interval = 10  # seconds - scan every 10 seconds
+        self.device_monitor_timer = rumps.Timer(self.mic_manager.scan_devices, self.device_scan_interval)
+        self.device_monitor_timer.start()
+        print(f"Started periodic device monitoring every {self.device_scan_interval} seconds")
+
+        # Register for sleep/wake notifications
+        self.setup_system_event_notifications()
 
         # Start keyboard listener
         self.start_keyboard_listener()
@@ -618,16 +683,14 @@ class DictationApp(rumps.App):
             if os.path.exists(self.icon_active_path):
                 self.icon = self.icon_active_path
                 self.menu_bar_icon_is_active = True
-                print("[IconDebug] Set icon to ACTIVE")
             else:
-                print(f"[IconDebug] Active icon not found at {self.icon_active_path}, icon unchanged.")
+                print(f"Active icon not found at {self.icon_active_path}")
         else:
             if os.path.exists(self.icon_default_path):
                 self.icon = self.icon_default_path
                 self.menu_bar_icon_is_active = False
-                print("[IconDebug] Set icon to DEFAULT")
             else:
-                print(f"[IconDebug] Default icon not found at {self.icon_default_path}, icon unchanged.")
+                print(f"Default icon not found at {self.icon_default_path}")
 
     def _validate_and_set_initial_audio_device(self):
         """
@@ -863,9 +926,18 @@ class DictationApp(rumps.App):
 
 
 
-    def start_recording(self):
+    def start_recording(self, retry_count=0):
         if self.is_recording:
             print("Already recording.")
+            return
+
+        # Prevent infinite retry loops
+        MAX_RETRIES = 2
+        if retry_count >= MAX_RETRIES:
+            print(f"Max retries ({MAX_RETRIES}) exceeded for start_recording, aborting.")
+            AppHelper.callAfter(rumps.alert, 
+                title="Recording Failed", 
+                message="Unable to start recording after multiple attempts. Please check your microphone connections and try manually selecting a different device.")
             return
 
         # Ensure mic_manager is available
@@ -874,10 +946,13 @@ class DictationApp(rumps.App):
             AppHelper.callAfter(rumps.alert, title="Startup Error", message="Microphone manager failed to load. Please restart.")
             return
 
+        # Force a device scan before attempting to record to catch stale device IDs
+        self.mic_manager.scan_devices()
+        
         # Verify the current microphone (self.device_index) is still available via mic_manager
         # The app's self.device_index should be kept in sync with mic_manager.current_mic_index
         if not self.mic_manager.verify_microphone(self.device_index):
-            print(f"Selected microphone (App Index: {self.device_index}, Name: {self.mic_manager.get_microphone_name(self.device_index)}) is no longer available at start of recording.")
+            print(f"Selected microphone (Index: {self.device_index}, Name: {self.mic_manager.get_microphone_name(self.device_index)}) is no longer available.")
             old_unavailable_index = self.device_index
             old_unavailable_name = self.mic_manager.get_microphone_name(old_unavailable_index)
             
@@ -892,14 +967,14 @@ class DictationApp(rumps.App):
                 return
 
             self.device_index = new_best_index
-            self.mic_manager.current_mic_index = new_best_index # Keep mic_manager in sync
+            self.mic_manager.current_mic_index = new_best_index  # Keep mic_manager in sync
             new_name = self.mic_manager.get_microphone_name(self.device_index)
             
             print(f"Automatically switched from unavailable '{old_unavailable_name}' to '{new_name}' (Index: {self.device_index})")
             
             # Update config and UI to reflect this automatic change
             self.update_config_with_new_device()
-            AppHelper.callAfter(self.update_microphone_menu) # Update menu on main thread
+            AppHelper.callAfter(self.update_microphone_menu)  # Update menu on main thread
             
             message = f"Mic '{old_unavailable_name}' was unavailable. Switched to '{new_name}'."
             AppHelper.callAfter(rumps.notification,
@@ -928,15 +1003,17 @@ class DictationApp(rumps.App):
         except sd.PortAudioError as pae:
             print(f"PortAudioError starting recording on device {self.device_index} ({self.mic_manager.get_microphone_name(self.device_index)}): {pae}")
             self.set_menu_bar_icon(active=False)
-            self.is_recording = False # Ensure is_recording is reset
+            self.is_recording = False  # Ensure is_recording is reset
             self._close_stream_safely()
             
-            # More detailed PortAudioError handling from the plan
+            # More detailed PortAudioError handling
             original_failed_device_index = self.device_index
             original_failed_device_name = self.mic_manager.get_microphone_name(original_failed_device_index)
 
             # If error is related to the device, try fallback (even if verify_microphone passed initially, something else could go wrong)
-            if "Invalid device" in str(pae) or "Device unavailable" in str(pae) or "Invalid number of channels" in str(pae) or "Unanticipated host error" in str(pae):
+            if ("Invalid device" in str(pae) or "Device unavailable" in str(pae) or 
+                "Invalid number of channels" in str(pae) or "Unanticipated host error" in str(pae) or
+                "Audio Hardware Not Running" in str(pae) or "PaErrorCode -9986" in str(pae)):
                 print(f"PortAudioError suggests device '{original_failed_device_name}' (Index {original_failed_device_index}) is problematic. Attempting fallback.")
                 # Ask mic_manager for the next best option that ISN'T the one that just failed
                 # This requires a temporary modification to preferences or a new mic_manager method, 
@@ -944,9 +1021,9 @@ class DictationApp(rumps.App):
                 # For simplicity, we'll re-scan and get best. If it's the same, the error is likely persistent.
                 
                 self.mic_manager.scan_devices() # Re-scan to ensure list is fresh
-                new_fallback_index = self.mic_manager.get_best_microphone_index()
+                new_fallback_index = self.mic_manager.get_best_microphone_index(exclude_indices=[original_failed_device_index])
 
-                if new_fallback_index != -1 and new_fallback_index != original_failed_device_index:
+                if new_fallback_index != -1:
                     self.device_index = new_fallback_index
                     self.mic_manager.current_mic_index = new_fallback_index # Sync mic_manager
                     new_fallback_name = self.mic_manager.get_microphone_name(new_fallback_index)
@@ -961,20 +1038,16 @@ class DictationApp(rumps.App):
                     self.update_config_with_new_device()
                     AppHelper.callAfter(self.update_microphone_menu)
                     
-                    # IMPORTANT: Retry start_recording. This could lead to a loop if all devices fail.
-                    # Add a retry counter or mechanism if this becomes an issue.
-                    print("Retrying start_recording with the new fallback device.")
-                    self.start_recording() # Recursive call - be cautious
-                    return # Exit current failed attempt
-                elif new_fallback_index == original_failed_device_index:
-                    print(f"Fallback selected the same problematic device '{original_failed_device_name}'. Not retrying with this one.")
-                    # Fall through to generic error message
-                else: # new_fallback_index is -1 (no devices found)
-                    print("Fallback attempt failed: No alternative microphones found after PortAudioError.")
+                    # Retry start_recording with retry counter to prevent infinite loops
+                    print(f"Retrying start_recording with the new fallback device (attempt {retry_count + 1}).")
+                    self.start_recording(retry_count + 1)  # Recursive call with retry counter
+                    return  # Exit current failed attempt
+                else:  # new_fallback_index is -1 (no alternative devices found)
+                    print(f"Fallback attempt failed: No alternative microphones found after excluding failed device {original_failed_device_index}")
                     # Fall through to generic error message
             
             # Generic error message if no specific fallback occurred or fallback also failed
-            msg = f"Could not start audio recording with {original_failed_device_name} (PortAudio Error):\n{pae}\n\nPlease check your audio device settings or select a different microphone from the menu."
+            msg = f"Could not start audio recording with {original_failed_device_name} (PortAudio Error):\n{pae}\n\nThis often happens after sleep/wake or logout/login. Try:\n1. Use 'Change Audio Device' to select a different microphone\n2. Restart Kataru\n\nTechnical details: Device ID {original_failed_device_index} became invalid."
             AppHelper.callAfter(rumps.alert, title="Audio Recording Error", message=msg)
 
         except Exception as e:
@@ -1199,12 +1272,12 @@ class DictationApp(rumps.App):
             print("Starting transcription thread...")
             transcribed_text = self.transcribe_audio(temp_file_path)
             if transcribed_text:
-                # NEW: Convert to Australian English
+                # Convert to Australian English
                 converted_text, conversion_time_ms = self.convert_to_australian_english(transcribed_text)
-                print(f"[AusE Debug] Spelling conversion to Australian English took {conversion_time_ms:.3f} ms.")
+                print(f"Spelling conversion to Australian English took {conversion_time_ms:.3f} ms.")
                 
                 # Use callAfter for paste as it might interact with UI/clipboard
-                AppHelper.callAfter(self.paste_text, converted_text) # Use converted_text
+                AppHelper.callAfter(self.paste_text, converted_text)
             else:
                 print("Transcription thread: No text produced.")
         finally:
@@ -1219,7 +1292,6 @@ class DictationApp(rumps.App):
             # Use callAfter to ensure timer start happens on the main thread
             # Check the flag before attempting to restart
             if self.timer_paused_by_recording:
-                print("[Debug] Scheduling scan timer restart from transcription thread.")
                 # Schedule the restart logic to run on the main thread
                 AppHelper.callAfter(self._restart_scan_timer_if_needed)
             # --------------------------
@@ -1227,37 +1299,23 @@ class DictationApp(rumps.App):
 
     def _restart_scan_timer_if_needed(self):
         """Helper function to restart timer, intended to be called via AppHelper.callAfter"""
-        if self.timer_paused_by_recording: # Double check flag on main thread
-            print("[Debug] Restarting scan timer now (on main thread).")
+        if self.timer_paused_by_recording:  # Double check flag on main thread
             if self.mic_manager.scan_timer: 
                 try:
                     self.mic_manager.scan_timer.start()
                 except Exception as e:
-                    print(f"[Debug] Error restarting scan timer: {e}")
-            else:
-                 print("[Debug] Scan timer object doesn't exist when trying to restart.")
-            self.timer_paused_by_recording = False # Reset flag
-        else:
-            print("[Debug] Scan timer restart requested, but flag was already false.")
+                    print(f"Error restarting scan timer: {e}")
+            self.timer_paused_by_recording = False  # Reset flag
 
     # --- Keyboard Listener Callbacks ---
     def on_press(self, key):
-
         if key == self.recording_hotkey:
-            if not self.is_recording:
-              print(f"[HotkeyDebug] Hotkey ({self.hotkey_str}) PRESSED - starting recording sequence.")
             self.start_recording()
 
-
-
     def on_release(self, key):
-
         if key == self.recording_hotkey:
             if self.is_recording:
-                print(f"[HotkeyDebug] Hotkey ({self.hotkey_str}) RELEASED - processing dictation.")
                 self.process_dictation_on_release()
-            else:
-                print(f"[HotkeyDebug] Hotkey ({self.hotkey_str}) RELEASED but was not recording.")
 
 
     def show_troubleshooting(self, sender):
@@ -1267,7 +1325,16 @@ class DictationApp(rumps.App):
 2. Verify whisper.cpp is compiled correctly.
 3. Check config.ini paths are correct.
 4. Try manually running whisper-cli on a WAV file from the terminal.
-5. macOS Permissions: Ensure Kataru has:
+
+AUDIO DEVICE ISSUES (Common after sleep/wake or logout/login):
+• If recording fails with "no object with given ID" errors:
+  - Use "Refresh Audio Devices" menu option
+  - Try "Change Audio Device" to select a different microphone
+  - Restart Kataru if problem persists
+• Device monitoring now runs automatically every 10 seconds
+• The app detects sleep/wake events and auto-refreshes devices
+
+macOS PERMISSIONS: Ensure Kataru has:
    - Microphone Access (System Settings > Privacy & Security > Microphone)
    - Input Monitoring Access (System Settings > Privacy & Security > Input Monitoring) for hotkeys.
    - Accessibility Access (System Settings > Privacy & Security > Accessibility) if text pasting fails.
@@ -1346,19 +1413,22 @@ Main Executable: {self.main_exec_path}
         """Cleanup resources when the app is stopping."""
         print("Stopping application components...")
         
+        # Stop device monitoring timer
+        if hasattr(self, 'device_monitor_timer') and self.device_monitor_timer is not None:
+            if self.device_monitor_timer.is_alive():
+                print("Stopping device monitoring timer...")
+                self.device_monitor_timer.stop()
+            self.device_monitor_timer = None
+        
         # Stop microphone scanning timer
         if hasattr(self, 'mic_scan_timer') and self.mic_scan_timer is not None:
             if self.mic_scan_timer.is_alive():
                 print("Stopping microphone scan timer...")
                 self.mic_scan_timer.stop()
-            self.mic_scan_timer = None # Clear reference
+            self.mic_scan_timer = None
 
-        # Stop the microphone manager's internal timer if it had one (original plan)
-        # In the current implementation, DictationApp owns the timer.
+        # Stop the microphone manager
         if hasattr(self, 'mic_manager') and self.mic_manager is not None:
-             # The mic_manager.stop_monitoring() was designed for its own timer.
-             # If DictationApp manages the timer, this might not be strictly necessary
-             # unless mic_manager has other cleanup. Let's call it for completeness.
             print("Calling MicrophoneManager.stop_monitoring()...")
             self.mic_manager.stop_monitoring()
 
@@ -1373,6 +1443,70 @@ Main Executable: {self.main_exec_path}
         self._close_stream_safely()
 
         print("Kataru application cleanup finished.")
+
+    @rumps.clicked("Refresh Audio Devices")
+    def manual_refresh_devices(self, sender):
+        """Manually refresh the list of audio devices."""
+        print("Refreshing audio devices...")
+        self.mic_manager.scan_devices()
+        
+        # Force sync if they're out of sync
+        if self.device_index != self.mic_manager.current_mic_index:
+            if self.mic_manager.current_mic_index is not None and self.mic_manager.current_mic_index != -1:
+                self.device_index = self.mic_manager.current_mic_index
+                self.update_config_with_new_device()
+                print(f"Synced device selection to: {self.mic_manager.get_microphone_name(self.device_index)}")
+        
+        AppHelper.callAfter(self.update_microphone_menu)
+        print("Audio devices refreshed.")
+
+    def setup_system_event_notifications(self):
+        """Set up system event notifications for sleep/wake events."""
+        try:
+            # Get the shared workspace instance
+            workspace = NSWorkspace.sharedWorkspace()
+            notification_center = workspace.notificationCenter()
+            
+            # Register for sleep notification
+            notification_center.addObserver_selector_name_object_(
+                self, 
+                objc.selector(self.system_will_sleep, signature=b'v@:@'),
+                NSWorkspace.willSleepNotification, 
+                None
+            )
+            
+            # Register for wake notification  
+            notification_center.addObserver_selector_name_object_(
+                self,
+                objc.selector(self.system_did_wake, signature=b'v@:@'), 
+                NSWorkspace.didWakeNotification,
+                None
+            )
+            
+            print("Registered for system sleep/wake notifications")
+        except Exception as e:
+            print(f"Failed to register for system notifications: {e}")
+
+    def system_will_sleep(self, notification):
+        """Called when system is about to sleep."""
+        print("System going to sleep - pausing device monitoring")
+        if hasattr(self, 'device_monitor_timer') and self.device_monitor_timer is not None:
+            if self.device_monitor_timer.is_alive():
+                self.device_monitor_timer.stop()
+
+    def system_did_wake(self, notification):
+        """Called when system wakes up from sleep."""
+        print("System woke up - refreshing devices and resuming monitoring")
+        # Force immediate device scan when system wakes up
+        self.mic_manager.scan_devices()
+        AppHelper.callAfter(self.update_microphone_menu)
+        
+        # Restart device monitoring timer
+        if hasattr(self, 'device_monitor_timer') and self.device_monitor_timer is not None:
+            if not self.device_monitor_timer.is_alive():
+                self.device_monitor_timer = rumps.Timer(self.mic_manager.scan_devices, self.device_scan_interval)
+                self.device_monitor_timer.start()
+                print("Restarted device monitoring timer after wake")
 
 
 

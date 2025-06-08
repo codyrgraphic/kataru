@@ -66,6 +66,10 @@ Key Makefile Targets:
 * **Environment Isolation:** Bundled and development modes are properly isolated to prevent conflicts.
 * **Resource Path Handling:** All resource paths (model, icons, executable) are calculated based on execution context.
 * **Error Handling:** Improved error messages and graceful fallbacks.
+* **Intelligent Microphone Management:** Comprehensive device monitoring, preference-based selection, and automatic fallback logic.
+* **Device Synchronization:** Maintains consistency between app state and microphone manager to prevent conflicts.
+* **Sleep/Wake Event Handling:** Automatically refreshes device list when system wakes up to handle device changes.
+* **Menu Management:** Enhanced microphone menu with proper clearing logic and rate limiting to prevent UI issues.
 
 ## Common Issues
 
@@ -90,15 +94,57 @@ unset PYTHONUNBUFFERED
 unset PYTHONDONTWRITEBYTECODE
 ```
 
-### Audio Device Selection
+### Audio Device Selection & Troubleshooting
 
-The application will automatically show audio devices in the menu. If an invalid device index is configured, you'll see errors when recording starts:
+The application now includes intelligent device management that automatically handles most device-related issues:
 
+**Normal Operation:**
+- The app automatically selects the best microphone based on preferences in `config.ini`
+- Device monitoring runs every 10 seconds and responds to sleep/wake events
+- Automatic fallback occurs when devices become unavailable
+
+**Troubleshooting Device Issues:**
+If you encounter audio-related errors like:
 ```
 PortAudioError starting recording: Error opening InputStream: Invalid number of channels
+AudioHardware-mac-imp.cpp:660 AudioObjectGetPropertyData: no object with given ID XXX
 ```
 
-Use the "List Audio Devices" menu option to see available devices, and "Change Audio Device" to select a new one. The change is automatically saved to `config.ini`.
+**Immediate Solutions:**
+1. Use "Refresh Audio Devices" menu option to force a device scan
+2. Use "List Audio Devices" to see available devices with their priority scores  
+3. Use "Change Audio Device" to manually select a different microphone
+4. Check that your preferred device is connected and working in System Settings > Sound
+
+**Configuration Solutions:**
+1. Update microphone preferences in `config.ini` [microphones] section
+2. Set higher priority values for reliable devices
+3. Add new device patterns for devices you use regularly
+
+**Advanced Troubleshooting:**
+- The app automatically excludes failed devices when selecting alternatives
+- Device synchronization issues are resolved automatically during device scans
+- Sleep/wake cycles trigger immediate device refresh
+- Retry logic prevents infinite loops when multiple devices fail
+
+All device changes are automatically saved to `config.ini`, and the app provides notifications when automatic device switching occurs.
+
+### Debugging Utility
+
+The project includes a `test_microphones.py` utility script for troubleshooting microphone selection:
+
+```bash
+python3 test_microphones.py
+```
+
+This script shows:
+- Available microphones and their device indices
+- Configured preferences from `config.ini`
+- Which microphone would be selected based on preferences
+- Current `config.ini` device_index setting and its validity
+- Preference scores for each available device
+
+This is useful for debugging microphone selection issues or verifying that your preferences are configured correctly.
 
 ## Notes
 
@@ -107,17 +153,43 @@ Use the "List Audio Devices" menu option to see available devices, and "Change A
 *   **Audio Device Index:** The default audio device index is 4, but can change. Use the UI to update it.
 *   **Configuration File:** The `config.ini` file is used to store various settings and configurations for the project. 
 
-## Audio Device Notes (Dynamic Indices)
+## Audio Device Notes (Dynamic Indices & Intelligent Management)
 
 *   **Device Enumeration:** The audio device indices are assigned dynamically by the operating system (Core Audio) and retrieved by `sounddevice`. They are **not fixed** and can change based on:
     *   Connecting or disconnecting audio devices (especially USB/Bluetooth).
     *   System restarts.
     *   Software updates affecting audio drivers.
-*   **Device Selection Solution:** The app includes "List Audio Devices" and "Change Audio Device" menu options to manage this issue more effectively:
-    * "List Audio Devices" shows all available input devices and marks the currently selected one
-    * "Change Audio Device" presents a dialog allowing users to select a new device by name
-    * When a new device is selected, the config.ini file is automatically updated
-    * This removes the need to manually check device indices or edit the config file
+
+*   **Intelligent Device Management:** The app now includes comprehensive microphone management:
+    * **Automatic Device Selection:** Uses preference-based scoring defined in `config.ini` [microphones] section
+    * **Continuous Monitoring:** Scans for device changes every 10 seconds and responds to sleep/wake events
+    * **Smart Fallback Logic:** Automatically switches to alternative devices when the selected microphone becomes unavailable
+    * **Device Synchronization:** Maintains sync between app state and microphone manager to prevent conflicts
+    * **Menu Integration:** Microphone menu shows devices with priority scores and current selection indicator
+
+*   **Device Selection Options:** The app provides multiple ways to manage microphone selection:
+    * **Automatic (Recommended):** Configure preferences in `config.ini` and let the app choose the best available device
+    * **Manual Selection:** Use "Change Audio Device" menu option to select a specific device
+    * **Troubleshooting:** Use "List Audio Devices" to see all available devices with their priority scores
+    * **Refresh:** Use "Refresh Audio Devices" to force a device scan after hardware changes
+
+*   **Preference Configuration:** In `config.ini` [microphones] section, define substring patterns with priority values (1-100):
+    ```ini
+    [microphones]
+    seiren = 90        # Matches "Razer Seiren Mini" 
+    macbook = 80       # Matches "MacBook Air Microphone"
+    sony = 70          # Matches Sony headsets
+    headset = 60       # Generic headset match
+    airpods = 50       # Matches AirPods devices
+    "携帯" = 5         # Specific device name (quoted for special characters)
+    teams = 1          # Microsoft Teams Audio (low priority)
+    ```
+
+*   **Error Handling & Recovery:** Enhanced error detection and recovery mechanisms:
+    * Detects PortAudio errors including "Audio Hardware Not Running" and device ID conflicts
+    * Implements retry logic with device exclusion to prevent infinite loops
+    * Provides user notifications when automatic device switching occurs
+    * Gracefully handles sleep/wake cycles and device disconnections
 
 ## macOS Permissions Issues
 

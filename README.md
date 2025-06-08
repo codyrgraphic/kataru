@@ -8,6 +8,10 @@ A macOS menu bar app for dictation using Whisper.cpp. Press and hold a hotkey (d
 - Release the hotkey to transcribe the recorded audio
 - Transcribed text is automatically pasted at the cursor position
 - Menu bar icon changes to indicate recording status
+- **Intelligent microphone management** with preference-based automatic selection
+- **Automatic device monitoring** with sleep/wake event handling to detect microphone changes
+- **Smart fallback logic** that automatically switches to alternative microphones when devices become unavailable
+- Menu bar microphone selection with priority scoring based on device preferences
 - Configurable via `config.ini`
 - Works with minimal latency using local Whisper models
 - Supports both direct execution (development) and bundled app (distribution) modes
@@ -117,6 +121,17 @@ icon_active = icon_active.png
 timeout_seconds = 60
 # Number of CPU threads for whisper-cli to use
 num_threads = 4
+
+[microphones]
+# Microphone preferences (substring matching, higher values = higher priority)
+# The app will automatically select the best available device based on these preferences
+seiren = 90
+macbook = 80
+sony = 70
+headset = 60
+airpods = 50
+"携帯" = 5
+teams = 1
 ```
 
 ## Architecture
@@ -182,11 +197,26 @@ If permissions are denied or not configured correctly, features like hotkey dete
 
 ### Audio Device Selection
 
-If audio recording isn't working correctly:
+The application now includes intelligent microphone management:
 
-1. Use the "List Audio Devices" menu option to see available devices
-2. Use the "Change Audio Device" menu option to select a different input device
-3. The selected device index will be saved to `config.ini`
+**Automatic Device Selection:**
+- The app automatically selects the best available microphone based on preferences defined in `config.ini`
+- Microphone preferences use substring matching (e.g., "macbook" matches "MacBook Air Microphone")
+- Higher priority values (1-100) indicate preferred devices
+- The app monitors for device changes every 10 seconds and when the system wakes from sleep
+
+**Manual Device Selection:**
+If you need to troubleshoot audio issues or manually select a device:
+
+1. Use the "List Audio Devices" menu option to see available devices with their priority scores
+2. Use the "Change Audio Device" menu option to manually select a specific input device
+3. Use "Refresh Audio Devices" if devices aren't appearing after connecting new hardware
+4. The selected device index will be saved to `config.ini`
+
+**Automatic Fallback:**
+- If the selected microphone becomes unavailable (e.g., USB device unplugged), the app automatically switches to the next best available device
+- The app handles sleep/wake cycles and device disconnections gracefully
+- You'll see notifications when automatic device switching occurs
 
 ### Metal Support
 
