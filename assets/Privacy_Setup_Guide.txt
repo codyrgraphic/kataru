@@ -1,0 +1,32 @@
+KATARU PRIVACY SETUP GUIDE
+
+Kataru requires several permissions to function properly.
+All processing happens locally on your Mac - no data is transmitted.
+
+REQUIRED PERMISSIONS:
+Kataru will request these permissions when first used:
+
+1. INPUT MONITORING - For F5 hotkey detection
+2. MICROPHONE - For speech recording 
+3. AUTOMATION - For controlling System Events
+4. ACCESSIBILITY - For pasting transcribed text
+
+SETUP STEPS:
+1. Launch Kataru from Applications
+2. Press F5 - grant "Input Monitoring" when prompted
+3. Press F5 again - grant "Microphone" when prompted
+4. Speak and release F5 - grant "Automation" and "Accessibility" when prompted
+
+TROUBLESHOOTING:
+• If F5 doesn't work: Enable "Input Monitoring" in Privacy & Security
+• If recording fails: Enable "Microphone" in Privacy & Security  
+• If pasting fails with "Code 1" error: Enable BOTH "Automation" AND "Accessibility" in Privacy & Security
+• IMPORTANT: Text pasting requires TWO permissions - both must be enabled
+• If permissions reset after updates: Re-enable in Privacy & Security settings
+• For support: help@kataru.app
+
+PRIVACY GUARANTEE:
+All speech processing happens locally on your device.
+No audio or text data is ever transmitted to external servers.
+
+Your privacy is fully protected with Kataru. 

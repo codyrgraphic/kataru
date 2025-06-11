@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **DMG Creation System**: Implemented professional DMG installer creation using create-dmg
+  - Added DMG creation targets to Makefile with version-aware naming (Kataru-{version}.dmg)
+  - Integrated create-dmg tool for professional installer appearance with custom icons and layout
+  - Added automatic staging directory management and cleanup
+  - Created proper Applications symlink for drag-and-drop installation experience
+  - DMG compression: 548MB app bundle → 464MB DMG file
+- **User Documentation**: Created comprehensive setup and signing documentation
+  - Added `assets/Privacy_Setup_Guide.txt` with clear setup instructions for users
+  - Created `assets/SIGNING_NOTES.md` with code signing details and distribution status
+  - Embedded privacy guide directly in DMG installer for user convenience
+- **Permission Management**: Enhanced user experience with intelligent permission handling
+  - Added "Check Permissions" menu item for real-time permission diagnosis
+  - Implemented check_required_permissions() function to test Automation and Accessibility permissions
+  - Enhanced error messages with specific guidance based on current permission status
+  - Updated troubleshooting documentation to emphasize dual permission requirement
+
+### Enhanced
+- **Code Signing & Privacy Permissions**: Improved app security and user experience
+  - Created Kataru.entitlements file with proper privacy permissions for microphone and speech recognition
+  - Enhanced PyInstaller spec with improved privacy permission descriptions
+  - Integrated automatic code signing with entitlements in build process
+  - Added Developer ID Application certificate support with ad-hoc fallback
+  - Updated privacy descriptions to emphasize local processing and data protection
+
+### Changed
+- **Build System Improvements**: Enhanced Makefile for professional distribution
+  - Added DMG creation variables and targets with 5-stage progress feedback
+  - Improved clean target to include DMG staging artifacts
+  - Enhanced version extraction with fallback for robustness
+  - Updated build process to include automatic code signing with entitlements
+  - Optimized DMG layout with 800x450 window size and strategic icon placement
+
+### Fixed
+- **DMG Creation Issues**: Fixed Applications symlink conflict by letting create-dmg handle symlink creation
+- **Build Process**: Enhanced error handling and progress feedback for large file DMG creation
+- **CRITICAL Permission Flow**: Resolved confusing permission flow causing "Code 1" paste errors
+  - Fixed misleading error messages that didn't explain dual permission requirement
+  - Enhanced paste_text() function with intelligent permission checking
+  - Added real-time permission diagnosis with specific guidance based on current status
+  - Updated documentation to emphasize that BOTH Automation AND Accessibility permissions are required
+
+### Technical Notes
+- **Phase 1 & 2 Complete**: Foundation and Professional Polish phases implemented
+- DMG creation time: ~1-2 minutes for large app bundles (548MB → 464MB)
+- Code signing works seamlessly with Developer ID certificates
+- All privacy permissions properly embedded and functional
+- PyInstaller scipy warnings are non-critical for app functionality
+- Professional DMG layout with privacy guide and optimized window sizing
+
 ## [0.1.3] - 2025-01-03
 
 ### Added

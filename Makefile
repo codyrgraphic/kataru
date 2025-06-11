@@ -14,8 +14,14 @@ DIST_DIR = dist
 APP_BUNDLE_NAME = Kataru.app
 APP_BUNDLE_PATH = $(DIST_DIR)/$(APP_BUNDLE_NAME)
 
+# DMG Creation Variables
+VERSION = $(shell $(VENV_PYTHON) -c "exec(open('version.py').read()); print(__version__)" 2>/dev/null || echo "0.1.3")
+DMG_NAME = Kataru-$(VERSION)
+DMG_STAGING_DIR = $(DIST_DIR)/dmg_staging
+DMG_OUTPUT = $(DIST_DIR)/$(DMG_NAME).dmg
+
 # Phony targets are not files
-.PHONY: all setup build_whisper_cpp build_app run run_dev clean clean_venv test
+.PHONY: all setup build_whisper_cpp build_app run run_dev clean clean_venv test build_dmg
 
 # Default target
 all: $(APP_BUNDLE_PATH)
@@ -71,7 +77,15 @@ $(APP_BUNDLE_PATH): Kataru.spec dictate_app.py version.py australian_english_con
 		echo "Error: PyInstaller build failed. App bundle not found at $(APP_BUNDLE_PATH)."; \
 		exit 1; \
 	fi
-	@echo "Application bundle created at $(APP_BUNDLE_PATH)"
+	@echo "Signing app bundle with entitlements..."
+	@if security find-identity -v -p codesigning | grep -q "Developer ID Application"; then \
+		echo "Signing with Developer ID certificate..."; \
+		codesign --force --sign "Developer ID Application" --entitlements Kataru.entitlements --options runtime $(APP_BUNDLE_PATH); \
+	else \
+		echo "No Developer ID found - signing with ad-hoc signature"; \
+		codesign --force --sign - --entitlements Kataru.entitlements $(APP_BUNDLE_PATH); \
+	fi
+	@echo "Application bundle created and signed at $(APP_BUNDLE_PATH)"
 
 build_app: $(APP_BUNDLE_PATH)
 	@echo "Application bundle is built."
@@ -94,7 +108,7 @@ clean:
 	@echo "Removing virtual environment $(VENV_DIR)..."
 	@rm -rf $(VENV_DIR)
 	@echo "Removing PyInstaller build artifacts (./build/ and $(DIST_DIR)/)..."
-	@rm -rf ./build $(DIST_DIR)
+	@rm -rf ./build $(DIST_DIR) $(DMG_STAGING_DIR)
 	@echo "Removing whisper.cpp build artifacts ($(WHISPER_CPP_BUILD_DIR)/)..."
 	@rm -rf $(WHISPER_CPP_BUILD_DIR)
 	@echo "Removing __pycache__ directories and .pyc files..."
@@ -104,4 +118,36 @@ clean:
 
 # Test target (for now, just a placeholder)
 test:
-	@echo "Running tests... (No tests defined yet)" 
+	@echo "Running tests... (No tests defined yet)"
+
+# DMG Creation Target
+$(DMG_OUTPUT): $(APP_BUNDLE_PATH)
+	@echo "Creating professional DMG installer - this will take 2-5 minutes for large app (~548MB)"
+	@echo "Progress: [1/5] Cleaning previous builds..."
+	@rm -rf $(DMG_STAGING_DIR) $(DMG_OUTPUT)
+	@mkdir -p $(DMG_STAGING_DIR)
+	@echo "Progress: [2/5] Copying app bundle ($(shell du -sh $(APP_BUNDLE_PATH) | cut -f1 2>/dev/null || echo 'calculating...'))..."
+	@cp -R $(APP_BUNDLE_PATH) $(DMG_STAGING_DIR)/
+	@cp assets/Privacy_Setup_Guide.txt $(DMG_STAGING_DIR)/ 2>/dev/null || echo "Note: Privacy guide not found"
+	@echo "Progress: [3/5] Setting up DMG structure..."
+	@echo "Progress: [4/5] Creating DMG (this may take several minutes)..."
+	create-dmg \
+		--volname "Kataru $(VERSION)" \
+		--volicon "assets/kataru_app_icon.icns" \
+		--window-pos 200 120 \
+		--window-size 800 450 \
+		--icon-size 128 \
+		--icon "Kataru.app" 200 190 \
+		--icon "Privacy_Setup_Guide.txt" 200 320 \
+		--hide-extension "Kataru.app" \
+		--app-drop-link 600 190 \
+		--hdiutil-quiet \
+		$(DMG_OUTPUT) \
+		$(DMG_STAGING_DIR)
+	@echo "Progress: [5/5] DMG creation complete!"
+	@echo "Final DMG: $(DMG_OUTPUT) ($(shell du -sh $(DMG_OUTPUT) | cut -f1 2>/dev/null || echo 'done'))"
+	@rm -rf $(DMG_STAGING_DIR)
+
+# Build targets
+build_dmg: $(DMG_OUTPUT)
+all: $(APP_BUNDLE_PATH) $(DMG_OUTPUT) 

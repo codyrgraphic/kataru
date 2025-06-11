@@ -71,9 +71,11 @@ info_plist = {
     'CFBundleShortVersionString': __version__, # <-- Use imported version
     'NSHumanReadableCopyright': u"Copyright Kataru© 2024 Cody Roberts. All rights reserved.",
     'LSUIElement': True, # Make it an agent app (no Dock icon)
-    'NSMicrophoneUsageDescription': 'Kataru requires microphone access to record audio for speech transcription.',
+    'NSMicrophoneUsageDescription': 'Kataru uses your microphone to convert speech to text for dictation. Audio is processed locally and never transmitted or stored.',
+    'NSSpeechRecognitionUsageDescription': 'Kataru requires speech recognition access to provide accurate voice-to-text conversion.',
     'NSAppleEventsUsageDescription': 'Kataru requires permission to control System Events for pasting transcribed text.',
-    'NSAccessibilityUsageDescription': 'Kataru requires accessibility permissions to detect the global hotkey press and release.',
+    'NSAccessibilityUsageDescription': 'Kataru needs accessibility access to insert dictated text into any application system-wide.',
+    'LSMinimumSystemVersion': '10.15.0',
 }
 
 

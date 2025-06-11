@@ -651,6 +651,7 @@ class DictationApp(rumps.App):
             self.mic_menu, # Microphones submenu will be managed by update_microphone_menu
             rumps.MenuItem("Refresh Audio Devices", callback=self.manual_refresh_devices),
             None, # Separator
+            rumps.MenuItem("Check Permissions", callback=self.check_permissions_menu),
             rumps.MenuItem("Edit Config", callback=self.edit_config),
             rumps.MenuItem("Troubleshooting", callback=self.show_troubleshooting),
             rumps.MenuItem("About", callback=self.about)
@@ -1182,72 +1183,123 @@ class DictationApp(rumps.App):
         # Ensure we return None if an exception occurred above
         return transcribed_text # This line is reached only on success
 
+    def check_required_permissions(self):
+        """Check if all required permissions are granted and provide helpful guidance."""
+        import subprocess
+        
+        # Check if we can execute basic osascript commands
+        try:
+            # Test basic AppleScript execution (tests Automation permission)
+            test_script = 'tell application "System Events" to return name of first process'
+            result = subprocess.run(['osascript', '-e', test_script], 
+                                  capture_output=True, text=True, timeout=3)
+            automation_ok = result.returncode == 0
+        except:
+            automation_ok = False
+            
+        # Test accessibility permission by trying to get UI element info
+        try:
+            test_accessibility = 'tell application "System Events" to return (count of UI elements of desktop)'
+            result = subprocess.run(['osascript', '-e', test_accessibility], 
+                                  capture_output=True, text=True, timeout=3)
+            accessibility_ok = result.returncode == 0
+        except:
+            accessibility_ok = False
+            
+        return {
+            'automation': automation_ok,
+            'accessibility': accessibility_ok,
+            'all_good': automation_ok and accessibility_ok
+        }
+
     # --- Pasting Text ---
     def paste_text(self, text_to_paste):
-        if not text_to_paste: print("No text to paste."); return
+        if not text_to_paste: 
+            print("No text to paste.")
+            return
+            
         print(f"Pasting: {text_to_paste[:100]}...")
 
-        # --- Reverted to osascript Implementation --- #
+        # --- Enhanced osascript Implementation with Better Error Handling --- #
         escaped_text = text_to_paste.replace('\\', '\\\\').replace('"', '\\"')
         applescript_command = f'set the clipboard to "{escaped_text}"\ndelay 0.1\ntell application "System Events" to keystroke "v" using command down'
         command = ["osascript", "-e", applescript_command]
+        
         try:
             process = subprocess.run(command, capture_output=True, text=True, check=True, timeout=5)
             print("Paste success via osascript.")
-            if process.stdout: print(f"osascript stdout: {process.stdout.strip()}")
-            if process.stderr: print(f"osascript stderr: {process.stderr.strip()}")
+            if process.stdout: 
+                print(f"osascript stdout: {process.stdout.strip()}")
+            if process.stderr: 
+                print(f"osascript stderr: {process.stderr.strip()}")
+                
         except FileNotFoundError:
             print("Error: 'osascript' command not found.")
             msg = "osascript command not found."
-            AppHelper.callAfter(rumps.alert, title="Paste Error", message=msg) # Use callAfter
+            AppHelper.callAfter(rumps.alert, title="Paste Error", message=msg)
+            
         except subprocess.TimeoutExpired:
-             print("Error: osascript paste command timed out.")
-             msg = "Paste command timed out."
-             AppHelper.callAfter(rumps.alert, title="Paste Error", message=msg) # Use callAfter
+            print("Error: osascript paste command timed out.")
+            msg = "Paste command timed out."
+            AppHelper.callAfter(rumps.alert, title="Paste Error", message=msg)
+            
         except subprocess.CalledProcessError as e:
             print(f"Paste Error (osascript - Code {e.returncode}):\nStderr: {e.stderr}\nStdout: {e.stdout}")
-            error_msg = f"Pasting failed (Code {e.returncode})."
-            if "not allowed to send keystrokes" in e.stderr or "access" in e.stderr:
-                 error_msg += "\nCheck System Settings > Privacy & Security > Automation."
+            
+            # Enhanced error message based on specific error patterns
+            if "not allowed to send keystrokes" in e.stderr or "not authorized" in e.stderr:
+                # Check current permission status to provide specific guidance
+                perms = self.check_required_permissions()
+                
+                if not perms['automation'] and not perms['accessibility']:
+                    error_msg = """Kataru needs TWO permissions to paste text:
+
+1. AUTOMATION: System Settings > Privacy & Security > Automation > Kataru > System Events ✓
+2. ACCESSIBILITY: System Settings > Privacy & Security > Accessibility > Kataru ✓
+
+Both permissions are required for text pasting to work."""
+                    
+                elif perms['automation'] and not perms['accessibility']:
+                    error_msg = """Almost there! Kataru has Automation permission but needs Accessibility permission:
+
+Go to: System Settings > Privacy & Security > Accessibility
+Add Kataru and enable the checkbox.
+
+Both Automation AND Accessibility permissions are required for pasting."""
+                    
+                elif not perms['automation'] and perms['accessibility']:
+                    error_msg = """Kataru has Accessibility permission but needs Automation permission:
+
+Go to: System Settings > Privacy & Security > Automation > Kataru
+Enable "System Events" checkbox.
+
+Both Automation AND Accessibility permissions are required for pasting."""
+                    
+                else:
+                    # Both should be working but aren't - suggest refresh
+                    error_msg = """Permission issue detected. Try this fix:
+
+1. Go to System Settings > Privacy & Security > Accessibility
+2. Remove Kataru from the list (click - button)
+3. Add Kataru back (click + button)
+4. Restart Kataru
+
+If this doesn't work, also try the same steps in:
+System Settings > Privacy & Security > Automation > Kataru"""
+                    
+            elif "execution error" in e.stderr.lower():
+                error_msg = f"AppleScript execution error.\nTry restarting Kataru.\n\nTechnical details: {e.stderr[:150]}..."
+                
             else:
-                 error_msg += f"\n{e.stderr[:200]}..."
-            AppHelper.callAfter(rumps.alert, title="Paste Error", message=error_msg) # Use callAfter
+                error_msg = f"Pasting failed (Code {e.returncode}).\n\nError details: {e.stderr[:200]}..."
+                
+            AppHelper.callAfter(rumps.alert, title="Paste Error", message=error_msg)
+            
         except Exception as e:
             print(f"Unexpected paste error (osascript): {e}")
             msg = f"Unexpected error during paste: {e}"
-            AppHelper.callAfter(rumps.alert, title="Paste Error", message=msg) # Use callAfter
-        # --- End of osascript Implementation ---
-        
-        # --- pynput Controller Implementation (Commented out) ---
-        # try:
-        #     # 1. Put text onto the clipboard (using subprocess/pbcopy for simplicity)
-        #     escaped_text_pbcopy = text_to_paste.replace('\\', '\\\\').replace('"', '\\"')
-        #     process_pbcopy = subprocess.run(
-        #         f'echo "{escaped_text_pbcopy}" | pbcopy',
-        #         shell=True, check=True, capture_output=True, text=True
-        #     )
-        #     if process_pbcopy.stderr:
-        #         print(f"pbcopy stderr: {process_pbcopy.stderr.strip()}")
-        #     print("Text copied to clipboard.")
-        # 
-        #     # 2. Simulate Cmd+V keystroke using pynput
-        #     time.sleep(0.1) 
-        #     keyboard_controller = KeyboardController()
-        #     with keyboard_controller.pressed(keyboard.Key.cmd):
-        #         keyboard_controller.press('v')
-        #         keyboard_controller.release('v')
-        #     print("Paste key simulated (Cmd+V)." )
-        # 
-        # except FileNotFoundError:
-        #     print("Error: 'pbcopy' command not found. Cannot copy to clipboard.")
-        #     rumps.alert(title="Paste Error", message="pbcopy command not found.")
-        # except subprocess.CalledProcessError as e:
-        #     print(f"Error copying to clipboard (pbcopy): {e}")
-        #     rumps.alert(title="Paste Error", message=f"Failed to copy text to clipboard: {e}")
-        # except Exception as e:
-        #     print(f"Unexpected paste error (pynput simulation): {e}")
-        #     rumps.alert(title="Paste Error", message=f"Unexpected error during paste simulation: {e}")
-        # --- End of pynput Controller implementation ---
+            AppHelper.callAfter(rumps.alert, title="Paste Error", message=msg)
+        # --- End of Enhanced osascript Implementation ---
 
     # --- Main Processing Logic ---
     def process_dictation_on_release(self):
@@ -1318,6 +1370,42 @@ class DictationApp(rumps.App):
                 self.process_dictation_on_release()
 
 
+    def check_permissions_menu(self, sender):
+        """Check and display current permission status."""
+        perms = self.check_required_permissions()
+        
+        # Create status indicators
+        automation_status = "✓ GRANTED" if perms['automation'] else "✗ MISSING"
+        accessibility_status = "✓ GRANTED" if perms['accessibility'] else "✗ MISSING"
+        
+        # Determine overall status
+        if perms['all_good']:
+            title = "✓ All Permissions Granted"
+            overall_status = "Kataru has all required permissions for text pasting."
+        else:
+            title = "⚠️ Missing Permissions"
+            overall_status = "Kataru is missing critical permissions for text pasting."
+        
+        message = f"""{overall_status}
+
+PERMISSION STATUS:
+
+Automation (System Events): {automation_status}
+Accessibility (Keystroke Injection): {accessibility_status}
+
+REQUIRED FOR PASTING:
+Both Automation AND Accessibility permissions must be granted for text pasting to work.
+
+TO FIX MISSING PERMISSIONS:
+1. Go to System Settings > Privacy & Security
+2. Click "Automation" → Enable "Kataru" → Check "System Events"
+3. Click "Accessibility" → Add "Kataru" and enable checkbox
+4. Restart Kataru after making changes
+
+Note: Input Monitoring (F5 hotkey) and Microphone permissions are checked separately when first used."""
+        
+        rumps.alert(title=title, message=message)
+
     def show_troubleshooting(self, sender):
         """Show troubleshooting tips."""
         title = "Troubleshooting Tips"
@@ -1334,11 +1422,19 @@ AUDIO DEVICE ISSUES (Common after sleep/wake or logout/login):
 • Device monitoring now runs automatically every 10 seconds
 • The app detects sleep/wake events and auto-refreshes devices
 
-macOS PERMISSIONS: Ensure Kataru has:
-   - Microphone Access (System Settings > Privacy & Security > Microphone)
-   - Input Monitoring Access (System Settings > Privacy & Security > Input Monitoring) for hotkeys.
-   - Accessibility Access (System Settings > Privacy & Security > Accessibility) if text pasting fails.
-   The app should request these. If not, or if denied, toggle them.
+macOS PERMISSIONS: Kataru needs ALL FOUR permissions to work properly:
+
+CRITICAL FOR PASTING (Both Required):
+   ✓ Automation: System Settings > Privacy & Security > Automation > Kataru > System Events
+   ✓ Accessibility: System Settings > Privacy & Security > Accessibility > Kataru
+
+REQUIRED FOR BASIC FUNCTION:
+   ✓ Input Monitoring: System Settings > Privacy & Security > Input Monitoring > Kataru (for F5 hotkey)
+   ✓ Microphone: System Settings > Privacy & Security > Microphone > Kataru (for recording)
+
+IMPORTANT: Text pasting requires BOTH Automation AND Accessibility permissions. 
+If pasting fails with "Code 1" error, check that BOTH permissions are enabled.
+
 6. Restart the app after granting permissions."""
         
         rumps.alert(title=title, message=message)
